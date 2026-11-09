@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// A message in the chat conversation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -39,10 +40,12 @@ pub async fn call_deepseek(
     system_prompt: &str,
     user_message: &str,
 ) -> Result<String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
 
     let request = ChatRequest {
-        model: "deepseek-chat".to_string(),
+        model: "deepseek-flash".to_string(),
         messages: vec![
             ChatMessage {
                 role: "system".to_string(),
@@ -77,6 +80,8 @@ pub async fn call_deepseek(
         .first()
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
+
+    tracing::debug!(response_len = text.len(), "DeepSeek API response received");
 
     Ok(text)
 }

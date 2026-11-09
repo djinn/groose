@@ -205,10 +205,15 @@ async fn receive_slack(
                 "verified Slack event"
             );
 
-            // Parse the command and handle it
+            // Parse the command and handle it — spawn in background
+            // so we can respond to Slack immediately (within 3s window)
             let decoded = urlencoding::decode(&event.text).unwrap_or(std::borrow::Cow::Borrowed(&event.text));
             let cmd = parse_command(&decoded);
-            handle_slack_command(&event, &cmd, &state).await;
+            let state_clone = state.clone();
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                handle_slack_command(&event_clone, &cmd, &state_clone).await;
+            });
 
             Ok(Json(serde_json::json!({ "ok": true, "event_id": event.event_id })))
         }
@@ -394,8 +399,10 @@ async fn handle_command_impl(
             if let Some(ref key) = deepseek_key {
                 let system = crate::deepseek::get_system_prompt("documentation");
                 let prompt = crate::deepseek::format_prompt("find_documentation", topic);
+                tracing::debug!("calling DeepSeek with key={}.. system={} prompt={}", &key[..8], &system[..20], &prompt[..30]);
                 match crate::deepseek::call_deepseek(key, system, &prompt).await {
                     Ok(answer) => {
+                        tracing::debug!("DeepSeek responded with {} chars", answer.len());
                         post_slack_message(bot_token, channel_id, &format!("📖 *Here's what I found:*\n\n{}", answer)).await;
                     }
                     Err(e) => {
