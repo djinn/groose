@@ -29,7 +29,8 @@ pub struct ExecutionContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionOutcome {
-    Completed,
+    /// Completed successfully, with the model's final response.
+    Completed { output: Option<String> },
     Failed { error: String },
     BudgetExceeded { reason: String },
     Cancelled { reason: String },
@@ -282,15 +283,27 @@ impl CodingEngine {
             })
             .await;
 
+        // Extract final output from conversation state
+        let final_output: Option<String> = state
+            .conversation_state
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<Vec<serde_json::Value>>(v.clone()).ok())
+            .and_then(|conv| {
+                conv.last()
+                    .and_then(|entry| entry.get("content"))
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+            });
+
         match verification {
             VerificationResult::Passed => {
                 events
                     .emit(EngineEvent::Completed {
                         task_id: task.task_id.clone(),
-                        outcome: ExecutionOutcome::Completed,
+                        outcome: ExecutionOutcome::Completed { output: final_output.clone() },
                     })
                     .await;
-                Ok(ExecutionOutcome::Completed)
+                Ok(ExecutionOutcome::Completed { output: final_output.clone() })
             }
             VerificationResult::Failed { errors } => {
                 let error_msg = errors.join("; ");
@@ -306,10 +319,10 @@ impl CodingEngine {
                 events
                     .emit(EngineEvent::Completed {
                         task_id: task.task_id.clone(),
-                        outcome: ExecutionOutcome::Completed,
+                        outcome: ExecutionOutcome::Completed { output: final_output },
                     })
                     .await;
-                Ok(ExecutionOutcome::Completed)
+                Ok(ExecutionOutcome::Completed { output: None })
             }
         }
     }

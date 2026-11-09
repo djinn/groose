@@ -210,7 +210,7 @@ async fn run_task(
 
     // 10. Report outcome
     match outcome {
-        ExecutionOutcome::Completed => println!("✅ Task completed successfully!"),
+        ExecutionOutcome::Completed { .. } => println!("✅ Task completed successfully!"),
         ExecutionOutcome::Failed { error } => println!("❌ Task failed: {}", error),
         ExecutionOutcome::BudgetExceeded { reason } => println!("💰 Budget exceeded: {}", reason),
         ExecutionOutcome::Cancelled { reason } => println!("⏹️  Task cancelled: {}", reason),

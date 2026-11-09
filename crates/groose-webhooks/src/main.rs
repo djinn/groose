@@ -581,7 +581,13 @@ async fn run_groose_engine(
     match engine.run(&task, &ctx, &workspace, &control, &events, &checkpoints, &verifier, &model).await {
         Ok(outcome) => {
             let msg = match &outcome {
-                ExecutionOutcome::Completed => "✅ *Task completed successfully!*".to_string(),
+                ExecutionOutcome::Completed { output } => {
+                if let Some(text) = output {
+                    text.to_string()
+                } else {
+                    "✅ *Task completed successfully!*".to_string()
+                }
+            }
                 ExecutionOutcome::Failed { error } => format!("❌ *Task failed:* {}", error),
                 ExecutionOutcome::BudgetExceeded { reason } => format!("⏱️ *Budget exceeded:* {}", reason),
                 ExecutionOutcome::Cancelled { reason } => format!("🛑 *Cancelled:* {}", reason),
