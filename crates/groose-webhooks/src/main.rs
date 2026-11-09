@@ -12,6 +12,8 @@ use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
+mod deepseek;
+
 use groose_integrations::{
     github::{GitHubConfig, GitHubEventVerifier},
     slack::{
@@ -204,7 +206,8 @@ async fn receive_slack(
             );
 
             // Parse the command and handle it
-            let cmd = parse_command(&event.text);
+            let decoded = urlencoding::decode(&event.text).unwrap_or(std::borrow::Cow::Borrowed(&event.text));
+            let cmd = parse_command(&decoded);
             handle_slack_command(&event, &cmd, &state).await;
 
             Ok(Json(serde_json::json!({ "ok": true, "event_id": event.event_id })))
@@ -366,6 +369,8 @@ async fn handle_command_impl(
     bot_token: &Option<String>,
     _state: &Arc<AppState>,
 ) {
+    let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok();
+
     match cmd {
         SlackCommand::FindDocumentation { topic, repo } => {
             tracing::info!(
@@ -374,17 +379,33 @@ async fn handle_command_impl(
                 repo = ?repo,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: finding documentation"
+                "SME: finding documentation with DeepSeek"
             );
             post_slack_message(
                 bot_token,
                 channel_id,
                 &format!(
-                    "📚 *Finding documentation for:* `{}`\n🔍 *In repository:* `{}`\n\nI'll search the codebase and documentation now.",
+                    "📚 *Searching for documentation on:* `{}`\n🔍 *In repository:* `{}`\n\nLet me research that for you...",
                     topic,
                     repo.as_deref().unwrap_or("(all repositories)")
                 ),
             ).await;
+
+            if let Some(ref key) = deepseek_key {
+                let system = crate::deepseek::get_system_prompt("documentation");
+                let prompt = crate::deepseek::format_prompt("find_documentation", topic);
+                match crate::deepseek::call_deepseek(key, system, &prompt).await {
+                    Ok(answer) => {
+                        post_slack_message(bot_token, channel_id, &format!("📖 *Here's what I found:*\n\n{}", answer)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DeepSeek error: {:?}", e);
+                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now. The AI service is unavailable.").await;
+                    }
+                }
+            } else {
+                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured. Set DEEPSEEK_API_KEY to enable AI processing.").await;
+            }
         }
 
         SlackCommand::TakeStory { repo, issue } => {
@@ -394,16 +415,29 @@ async fn handle_command_impl(
                 issue = %issue,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: taking story"
+                "SME: taking story with DeepSeek"
             );
             post_slack_message(
                 bot_token,
                 channel_id,
-                &format!(
-                    "🎯 *Taking story:* {} on `{}`\n⏳ Creating implementation plan...\n\nI'll analyze the issue, implement the changes, run tests, and open a PR.",
-                    issue, repo
-                ),
+                &format!("🎯 *Taking story:* {} on `{}`\n⏳ Analyzing and creating implementation plan...", issue, repo),
             ).await;
+
+            if let Some(ref key) = deepseek_key {
+                let system = crate::deepseek::get_system_prompt("implementer");
+                let prompt = format!("Implement issue {} on repository {}. Create a detailed plan with specific files to modify, then implement the changes.", issue, repo);
+                match crate::deepseek::call_deepseek(key, system, &prompt).await {
+                    Ok(answer) => {
+                        post_slack_message(bot_token, channel_id, &format!("📋 *Implementation Plan:*\n\n{}", answer)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DeepSeek error: {:?}", e);
+                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
+                    }
+                }
+            } else {
+                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
+            }
         }
 
         SlackCommand::ReviewPullRequest { repo, pr_number } => {
@@ -413,16 +447,29 @@ async fn handle_command_impl(
                 pr_number = %pr_number,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: reviewing PR"
+                "SME: reviewing PR with DeepSeek"
             );
             post_slack_message(
                 bot_token,
                 channel_id,
-                &format!(
-                    "🔍 *Reviewing PR #{}* on `{}`\n\nI'll examine the changes, run tests, check for issues, and provide a detailed review.",
-                    pr_number, repo
-                ),
+                &format!("🔍 *Reviewing PR #{}* on `{}`\n⏳ Analyzing changes...", pr_number, repo),
             ).await;
+
+            if let Some(ref key) = deepseek_key {
+                let system = crate::deepseek::get_system_prompt("reviewer");
+                let prompt = format!("Review pull request #{} on repository {}. Examine the code changes and provide detailed feedback.", pr_number, repo);
+                match crate::deepseek::call_deepseek(key, system, &prompt).await {
+                    Ok(answer) => {
+                        post_slack_message(bot_token, channel_id, &format!("🔎 *PR Review:*\n\n{}", answer)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DeepSeek error: {:?}", e);
+                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
+                    }
+                }
+            } else {
+                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
+            }
         }
 
         SlackCommand::Analyze { repo, goal } => {
@@ -432,16 +479,29 @@ async fn handle_command_impl(
                 goal = %goal,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: analyzing codebase"
+                "SME: analyzing with DeepSeek"
             );
             post_slack_message(
                 bot_token,
                 channel_id,
-                &format!(
-                    "📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n\nI'll examine the codebase structure, identify affected modules, and provide a scope estimate.",
-                    repo, goal
-                ),
+                &format!("📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n⏳ Estimating scope and effort...", repo, goal),
             ).await;
+
+            if let Some(ref key) = deepseek_key {
+                let system = crate::deepseek::get_system_prompt("analyst");
+                let prompt = crate::deepseek::format_prompt("analyze", &format!("Repository: {}\nGoal: {}", repo, goal));
+                match crate::deepseek::call_deepseek(key, system, &prompt).await {
+                    Ok(answer) => {
+                        post_slack_message(bot_token, channel_id, &format!("📊 *Analysis & Estimate:*\n\n{}", answer)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DeepSeek error: {:?}", e);
+                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
+                    }
+                }
+            } else {
+                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
+            }
         }
 
         SlackCommand::WorkOn { repo, instruction } => {
@@ -456,51 +516,28 @@ async fn handle_command_impl(
             post_slack_message(
                 bot_token,
                 channel_id,
-                &format!(
-                    "⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting implementation...",
-                    repo, instruction
-                ),
+                &format!("⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting implementation...", repo, instruction),
             ).await;
         }
 
         SlackCommand::UseSkill { skill } => {
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!("🧠 *Skill activated:* `{}`", skill),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!("🧠 *Skill activated:* `{}`", skill)).await;
         }
 
         SlackCommand::Status => {
-            post_slack_message(
-                bot_token,
-                channel_id,
-                "📋 *Status*\nNo active tasks in this channel.",
-            ).await;
+            post_slack_message(bot_token, channel_id, "📋 *Status*\nNo active tasks in this channel.").await;
         }
 
         SlackCommand::Pause => {
-            post_slack_message(
-                bot_token,
-                channel_id,
-                "⏸️ *Pausing task...*",
-            ).await;
+            post_slack_message(bot_token, channel_id, "⏸️ *Pausing task...*").await;
         }
 
         SlackCommand::Resume => {
-            post_slack_message(
-                bot_token,
-                channel_id,
-                "▶️ *Resuming task...*",
-            ).await;
+            post_slack_message(bot_token, channel_id, "▶️ *Resuming task...*").await;
         }
 
         SlackCommand::Cancel => {
-            post_slack_message(
-                bot_token,
-                channel_id,
-                "🛑 *Cancelling task...*",
-            ).await;
+            post_slack_message(bot_token, channel_id, "🛑 *Cancelling task...*").await;
         }
 
         SlackCommand::Unknown { text } => {
@@ -509,21 +546,39 @@ async fn handle_command_impl(
                 text = %text,
                 channel = %channel_id,
                 user = %user_id,
-                "unrecognized command"
+                "unrecognized command — falling back to DeepSeek"
             );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!(
+            // For unknown commands, ask DeepSeek to interpret
+            if let Some(ref key) = deepseek_key {
+                let system = "You are a helpful assistant that interprets user requests and provides helpful responses.";
+                match crate::deepseek::call_deepseek(key, system, text).await {
+                    Ok(answer) => {
+                        post_slack_message(bot_token, channel_id, &answer).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DeepSeek error: {:?}", e);
+                        post_slack_message(
+                            bot_token,
+                            channel_id,
+                            "🤔 I didn't understand that. Try:\n\
+                            • `find documentation for <topic>`\n\
+                            • `take story on org/repo #123`\n\
+                            • `review pr org/repo#42`\n\
+                            • `analyze org/repo for <goal>`",
+                        ).await;
+                    }
+                }
+            } else {
+                post_slack_message(
+                    bot_token,
+                    channel_id,
                     "🤔 I didn't understand that. Try:\n\
                     • `find documentation for <topic>`\n\
                     • `take story on org/repo #123`\n\
                     • `review pr org/repo#42`\n\
-                    • `analyze org/repo for <goal>`\n\
-                    • `status` / `pause` / `resume` / `cancel`\n\n\
-                    Or use slash commands like `/find-docs`, `/take-story`, `/review-pr`, `/analyze`"
-                ),
-            ).await;
+                    • `analyze org/repo for <goal>`",
+                ).await;
+            }
         }
     }
 }
