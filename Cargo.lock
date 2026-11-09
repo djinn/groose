@@ -4733,10 +4733,13 @@ name = "groose-webhooks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "chrono",
  "clap",
+ "groose-execution",
  "groose-integrations",
+ "groose-task",
  "hex",
  "reqwest",
  "serde",

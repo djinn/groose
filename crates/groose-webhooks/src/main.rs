@@ -22,6 +22,12 @@ use groose_integrations::{
     },
     trust::{AllowlistAuthorizer, Deduplicator, TracingAudit},
 };
+use groose_execution::engine::{CodingEngine, ExecutionContext, ModelProvider, ExecutionOutcome};
+use groose_execution::workspace::LocalWorkspace;
+use groose_execution::control::NoopControlReceiver;
+use groose_execution::checkpoints::FileCheckpointStore;
+use groose_execution::verifier::BasicVerifier;
+use groose_task::TaskSpec;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -374,7 +380,13 @@ async fn handle_command_impl(
     bot_token: &Option<String>,
     _state: &Arc<AppState>,
 ) {
-    let deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok();
+    let deepseek_key = match std::env::var("DEEPSEEK_API_KEY") {
+        Ok(k) => k,
+        Err(_) => {
+            post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured. Set DEEPSEEK_API_KEY to enable AI processing.").await;
+            return;
+        }
+    };
 
     match cmd {
         SlackCommand::FindDocumentation { topic, repo } => {
@@ -384,35 +396,17 @@ async fn handle_command_impl(
                 repo = ?repo,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: finding documentation with DeepSeek"
+                "SME: routing through groose engine"
             );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!(
-                    "📚 *Searching for documentation on:* `{}`\n🔍 *In repository:* `{}`\n\nLet me research that for you...",
-                    topic,
-                    repo.as_deref().unwrap_or("(all repositories)")
-                ),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!(
+                "📚 *Searching for documentation on:* `{}`\n🔍 *In repository:* `{}`\n\nStarting groose agent with DeepSeek...",
+                topic, repo.as_deref().unwrap_or("(all repositories)")
+            )).await;
 
-            if let Some(ref key) = deepseek_key {
-                let system = crate::deepseek::get_system_prompt("documentation");
-                let prompt = crate::deepseek::format_prompt("find_documentation", topic);
-                tracing::debug!("calling DeepSeek with key={}.. system={} prompt={}", &key[..8], &system[..20], &prompt[..30]);
-                match crate::deepseek::call_deepseek(key, system, &prompt).await {
-                    Ok(answer) => {
-                        tracing::debug!("DeepSeek responded with {} chars", answer.len());
-                        post_slack_message(bot_token, channel_id, &format!("📖 *Here's what I found:*\n\n{}", answer)).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("DeepSeek error: {:?}", e);
-                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now. The AI service is unavailable.").await;
-                    }
-                }
-            } else {
-                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured. Set DEEPSEEK_API_KEY to enable AI processing.").await;
-            }
+            run_groose_engine(
+                bot_token, channel_id, &deepseek_key,
+                &format!("Find documentation about: {}. Search the codebase, README files, docs directories, and explain the topic thoroughly with examples.", topic),
+            ).await;
         }
 
         SlackCommand::TakeStory { repo, issue } => {
@@ -422,29 +416,17 @@ async fn handle_command_impl(
                 issue = %issue,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: taking story with DeepSeek"
+                "SME: routing through groose engine"
             );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!("🎯 *Taking story:* {} on `{}`\n⏳ Analyzing and creating implementation plan...", issue, repo),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!(
+                "🎯 *Taking story:* {} on `{}`\n⏳ Starting groose agent to analyze and implement...",
+                issue, repo
+            )).await;
 
-            if let Some(ref key) = deepseek_key {
-                let system = crate::deepseek::get_system_prompt("implementer");
-                let prompt = format!("Implement issue {} on repository {}. Create a detailed plan with specific files to modify, then implement the changes.", issue, repo);
-                match crate::deepseek::call_deepseek(key, system, &prompt).await {
-                    Ok(answer) => {
-                        post_slack_message(bot_token, channel_id, &format!("📋 *Implementation Plan:*\n\n{}", answer)).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("DeepSeek error: {:?}", e);
-                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
-                    }
-                }
-            } else {
-                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
-            }
+            run_groose_engine(
+                bot_token, channel_id, &deepseek_key,
+                &format!("Implement issue {} on repository {}. Clone the repo, analyze the code, create a plan, implement the changes, write tests, and prepare a PR.", issue, repo),
+            ).await;
         }
 
         SlackCommand::ReviewPullRequest { repo, pr_number } => {
@@ -454,29 +436,17 @@ async fn handle_command_impl(
                 pr_number = %pr_number,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: reviewing PR with DeepSeek"
+                "SME: routing through groose engine"
             );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!("🔍 *Reviewing PR #{}* on `{}`\n⏳ Analyzing changes...", pr_number, repo),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!(
+                "🔍 *Reviewing PR #{}* on `{}`\n⏳ Starting groose agent to analyze changes...",
+                pr_number, repo
+            )).await;
 
-            if let Some(ref key) = deepseek_key {
-                let system = crate::deepseek::get_system_prompt("reviewer");
-                let prompt = format!("Review pull request #{} on repository {}. Examine the code changes and provide detailed feedback.", pr_number, repo);
-                match crate::deepseek::call_deepseek(key, system, &prompt).await {
-                    Ok(answer) => {
-                        post_slack_message(bot_token, channel_id, &format!("🔎 *PR Review:*\n\n{}", answer)).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("DeepSeek error: {:?}", e);
-                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
-                    }
-                }
-            } else {
-                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
-            }
+            run_groose_engine(
+                bot_token, channel_id, &deepseek_key,
+                &format!("Review pull request #{} on repository {}. Examine the code changes, run tests, check for security issues, and provide detailed feedback.", pr_number, repo),
+            ).await;
         }
 
         SlackCommand::Analyze { repo, goal } => {
@@ -486,45 +456,24 @@ async fn handle_command_impl(
                 goal = %goal,
                 channel = %channel_id,
                 user = %user_id,
-                "SME: analyzing with DeepSeek"
+                "SME: routing through groose engine"
             );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!("📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n⏳ Estimating scope and effort...", repo, goal),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!(
+                "📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n⏳ Starting groose agent for scope estimation...",
+                repo, goal
+            )).await;
 
-            if let Some(ref key) = deepseek_key {
-                let system = crate::deepseek::get_system_prompt("analyst");
-                let prompt = crate::deepseek::format_prompt("analyze", &format!("Repository: {}\nGoal: {}", repo, goal));
-                match crate::deepseek::call_deepseek(key, system, &prompt).await {
-                    Ok(answer) => {
-                        post_slack_message(bot_token, channel_id, &format!("📊 *Analysis & Estimate:*\n\n{}", answer)).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("DeepSeek error: {:?}", e);
-                        post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request right now.").await;
-                    }
-                }
-            } else {
-                post_slack_message(bot_token, channel_id, "⚠️ DeepSeek API key not configured.").await;
-            }
+            run_groose_engine(
+                bot_token, channel_id, &deepseek_key,
+                &format!("Analyze repository {} for the following goal: {}. Trace through the codebase, identify affected modules, assess complexity, estimate effort, and identify risks.", repo, goal),
+            ).await;
         }
 
         SlackCommand::WorkOn { repo, instruction } => {
-            tracing::info!(
-                command = "work_on",
-                repo = %repo,
-                instruction = %instruction,
-                channel = %channel_id,
-                user = %user_id,
-                "creating task"
-            );
-            post_slack_message(
-                bot_token,
-                channel_id,
-                &format!("⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting implementation...", repo, instruction),
-            ).await;
+            post_slack_message(bot_token, channel_id, &format!(
+                "⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting groose agent...", repo, instruction
+            )).await;
+            run_groose_engine(bot_token, channel_id, &deepseek_key, &format!("On repository {}: {}", repo, instruction)).await;
         }
 
         SlackCommand::UseSkill { skill } => {
@@ -548,44 +497,107 @@ async fn handle_command_impl(
         }
 
         SlackCommand::Unknown { text } => {
-            tracing::info!(
-                command = "unknown",
-                text = %text,
-                channel = %channel_id,
-                user = %user_id,
-                "unrecognized command — falling back to DeepSeek"
-            );
-            // For unknown commands, ask DeepSeek to interpret
-            if let Some(ref key) = deepseek_key {
-                let system = "You are a helpful assistant that interprets user requests and provides helpful responses.";
-                match crate::deepseek::call_deepseek(key, system, text).await {
-                    Ok(answer) => {
-                        post_slack_message(bot_token, channel_id, &answer).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("DeepSeek error: {:?}", e);
-                        post_slack_message(
-                            bot_token,
-                            channel_id,
-                            "🤔 I didn't understand that. Try:\n\
-                            • `find documentation for <topic>`\n\
-                            • `take story on org/repo #123`\n\
-                            • `review pr org/repo#42`\n\
-                            • `analyze org/repo for <goal>`",
-                        ).await;
+            tracing::info!(command = "unknown", text = %text, "falling back to groose agent");
+            run_groose_engine(bot_token, channel_id, &deepseek_key, text).await;
+        }
+    }
+}
+
+/// Run the groose coding engine with DeepSeek as the model provider.
+async fn run_groose_engine(
+    bot_token: &Option<String>,
+    channel_id: &str,
+    deepseek_key: &str,
+    goal: &str,
+) {
+    let model = crate::deepseek::DeepSeekProvider::new(deepseek_key.to_string(), None);
+
+    // Build a simple TaskSpec from the user's goal
+    let task = TaskSpec {
+        schema_version: "1.0".to_string(),
+        task_id: format!("slack-{}", uuid::Uuid::new_v4()),
+        r#type: "implement".to_string(),
+        repository: groose_task::RepositorySpec {
+            provider: "github".to_string(),
+            name: "djinn/groose".to_string(),
+            base_ref: "main".to_string(),
+            base_sha: None,
+        },
+        instruction: groose_task::InstructionSpec {
+            goal: goal.to_string(),
+            acceptance_criteria: vec![],
+        },
+        agent: groose_task::AgentConfig {
+            profile: "sme-engineer".to_string(),
+            skills: vec!["sme-documentation".to_string()],
+        },
+        execution: groose_task::ExecutionConfig {
+            mode: "autonomous".to_string(),
+            max_iterations: 10,
+            max_cost_usd: 2.0,
+            timeout_minutes: 30,
+        },
+        delivery: groose_task::DeliveryConfig {
+            strategy: "pull_request".to_string(),
+            merge: "human_approval".to_string(),
+        },
+        origin: groose_task::OriginInfo {
+            source: "slack".to_string(),
+            event_id: channel_id.to_string(),
+            conversation_id: String::new(),
+        },
+        admitted_at: None,
+        requester_identity: None,
+        installation_identity: None,
+        version: 0,
+    };
+
+    let ctx = ExecutionContext {
+        task: task.clone(),
+        workspace_root: std::path::PathBuf::from("/opt/groose/workspace"),
+        max_iterations: 10,
+        max_cost_usd: 2.0,
+        timeout: std::time::Duration::from_secs(1800),
+        checkpoint_every: 3,
+    };
+
+    let workspace_root = std::path::PathBuf::from("/opt/groose/workspace");
+    let workspace = groose_execution::workspace::LocalWorkspace::new(workspace_root);
+    let control = groose_execution::control::NoopControlReceiver;
+    let events = groose_execution::LoggingEventSink;
+    let checkpoints = match groose_execution::checkpoints::FileCheckpointStore::new(std::path::PathBuf::from("/opt/groose/checkpoints")) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to create checkpoint store: {:?}", e);
+            post_slack_message(bot_token, channel_id, "⚠️ Failed to initialize checkpoint store.").await;
+            return;
+        }
+    };
+    let verifier = groose_execution::verifier::BasicVerifier::new("cargo test", "cargo fmt --check");
+    let engine = CodingEngine::new("groose-sme");
+
+    post_slack_message(bot_token, channel_id, "🤖 *groose agent started* — I'll keep you updated as I make progress.").await;
+
+    match engine.run(&task, &ctx, &workspace, &control, &events, &checkpoints, &verifier, &model).await {
+        Ok(outcome) => {
+            let msg = match &outcome {
+                ExecutionOutcome::Completed => "✅ *Task completed successfully!*".to_string(),
+                ExecutionOutcome::Failed { error } => format!("❌ *Task failed:* {}", error),
+                ExecutionOutcome::BudgetExceeded { reason } => format!("⏱️ *Budget exceeded:* {}", reason),
+                ExecutionOutcome::Cancelled { reason } => format!("🛑 *Cancelled:* {}", reason),
+                ExecutionOutcome::PendingReview { pr_url } => {
+                    if let Some(url) = pr_url {
+                        format!("🔗 *PR created:* {}", url)
+                    } else {
+                        "📋 *Task ready for review*".to_string()
                     }
                 }
-            } else {
-                post_slack_message(
-                    bot_token,
-                    channel_id,
-                    "🤔 I didn't understand that. Try:\n\
-                    • `find documentation for <topic>`\n\
-                    • `take story on org/repo #123`\n\
-                    • `review pr org/repo#42`\n\
-                    • `analyze org/repo for <goal>`",
-                ).await;
-            }
+            };
+            post_slack_message(bot_token, channel_id, &msg).await;
+        }
+        Err(e) => {
+            tracing::warn!("Groose engine error: {:?}", e);
+            post_slack_message(bot_token, channel_id, &format!("⚠️ *Engine error:* {}", e)).await;
         }
     }
 }

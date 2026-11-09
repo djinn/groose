@@ -119,3 +119,28 @@ impl ControlReceiver for ChannelControlReceiver {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
+
+/// A no-op control receiver that never cancels or pauses.
+pub struct NoopControlReceiver;
+
+#[async_trait]
+impl ControlReceiver for NoopControlReceiver {
+    async fn receive(&self) -> Result<ControlSignal> {
+        // Never returns — no signals expected
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+    }
+
+    async fn try_receive(&self) -> Result<Option<ControlSignal>> {
+        Ok(None)
+    }
+
+    async fn send(&self, _signal: ControlSignal) -> Result<()> {
+        Ok(())
+    }
+
+    async fn is_cancelled(&self) -> bool {
+        false
+    }
+}

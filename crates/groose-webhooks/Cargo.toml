@@ -29,3 +29,6 @@ tracing-subscriber = { workspace = true }
 hex = "0.4"
 reqwest = { workspace = true }
 urlencoding = { workspace = true }
+groose-execution = { path = "../groose-execution" }
+groose-task = { path = "../groose-task" }
+async-trait = { workspace = true }

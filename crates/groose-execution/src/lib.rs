@@ -5,7 +5,7 @@ pub mod verifier;
 pub mod workspace;
 
 pub use checkpoints::{CheckpointStore, ExecutionCheckpoint};
-pub use control::{ControlReceiver, ControlSignal};
+pub use control::{ControlReceiver, ControlSignal, NoopControlReceiver};
 pub use engine::{CodingEngine, EngineError, ExecutionContext, ExecutionOutcome};
 pub use verifier::{VerificationResult, Verifier};
 pub use workspace::{Workspace, WorkspaceMode};
