@@ -1,0 +1,23 @@
+version: 1
+name: sme-engineer
+model:
+  provider: configurable
+  primary: configured-model-id
+skills:
+  - sme-documentation
+  - sme-implementer
+  - sme-reviewer
+  - sme-analyst
+tools:
+  allow:
+    - filesystem
+    - shell
+    - git
+    - github
+execution:
+  autonomous: true
+  checkpoint_every_iterations: 3
+  max_iterations: 40
+delivery:
+  create_pr: true
+  auto_merge: false
