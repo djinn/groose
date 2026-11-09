@@ -92,7 +92,7 @@ impl CodingEngine {
         events: &dyn EventSink,
         checkpoint_store: &dyn CheckpointStore,
         verifier: &dyn Verifier,
-        _model: &dyn ModelProvider,
+        model: &dyn ModelProvider,
     ) -> Result<ExecutionOutcome> {
         events
             .emit(EngineEvent::Started {
@@ -116,6 +116,39 @@ impl CodingEngine {
         };
 
         let start_time = std::time::Instant::now();
+
+        // Clone repo if specified
+        let has_repo = !task.repository.name.is_empty()
+            && task.repository.name != "unknown"
+            && task.repository.name != "djinn/groose";
+        if has_repo && state.iteration == 0 {
+            let clone_url = format!(
+                "https://github.com/{}.git",
+                task.repository.name
+            );
+            workspace
+                .run_command("git", &["clone", &clone_url, "."])
+                .await
+                .ok();
+        }
+
+        // Build the conversation from state
+        let mut conversation: Vec<serde_json::Value> = state
+            .conversation_state
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        // System prompt for the model
+        let tools_list = vec![
+            "read_file".to_string(),
+            "write_file".to_string(),
+            "run_command".to_string(),
+            "list_files".to_string(),
+            "git_status".to_string(),
+            "git_diff".to_string(),
+            "search_code".to_string(),
+        ];
 
         // Main execution loop
         while state.iteration < context.max_iterations {
@@ -157,16 +190,44 @@ impl CodingEngine {
                     .await;
             }
 
-            // 3. Execute next action
-            let action = self.choose_next_action(&state, task).await?;
+            // 3. Execute next action — ask the model what to do
+            let model_prompt = if let Some(ref plan) = state.plan {
+                format!(
+                    "Task: {goal}\nPlan: {plan}\n\nCurrent iteration: {iter}\nStep: {step}\n\nWhat should I do next? \
+                    I have access to tools like read_file, write_file, run_command, git, and search_code.\n\
+                    If the task is research/documentation, provide a thorough answer directly.",
+                    goal = task.instruction.goal,
+                    plan = plan,
+                    iter = state.iteration,
+                    step = state.current_step,
+                )
+            } else {
+                format!(
+                    "Task: {goal}\n\nCurrent state: fresh start\nWhat should I do first?",
+                    goal = task.instruction.goal,
+                )
+            };
+
+            let model_response = model.complete(&model_prompt, &tools_list).await?;
+            tracing::info!(iteration = state.iteration, response_len = model_response.len(), "model response received");
+
             events
                 .emit(EngineEvent::Action {
                     task_id: task.task_id.clone(),
-                    action,
+                    action: model_response.clone(),
                 })
                 .await;
 
-            // 4. Evaluate results
+            // Store response in conversation state
+            let conv_entry = serde_json::json!({
+                "iteration": state.iteration,
+                "role": "assistant",
+                "content": model_response,
+            });
+            conversation.push(conv_entry);
+            state.conversation_state = Some(serde_json::to_value(&conversation).unwrap_or_default());
+
+            // 4. Evaluate results - check if model declared completion
             state.iteration += 1;
             state.current_step = format!("iteration_{}", state.iteration);
 
