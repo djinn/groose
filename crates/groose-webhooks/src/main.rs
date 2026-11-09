@@ -261,20 +261,24 @@ async fn receive_slash_command(
     let slash_payload = SlashCommandPayload {
         command,
         text,
-        user_id,
-        channel_id,
+        user_id: user_id.clone(),
+        channel_id: channel_id.clone(),
         team_id,
         response_url,
     };
 
-    let _cmd = slash_payload.to_slack_command();
+    let cmd = slash_payload.to_slack_command();
 
-    // Return an immediate acknowledgement
-    // Slash commands must respond within 3 seconds; we use response_url for delayed response
-    let response = format!("Processing your request... I'll follow up with results shortly.");
+    // Execute the command in background (Slack needs response within 3 seconds)
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        handle_slash_command_impl(&cmd, &channel_id, &user_id, &state_clone).await;
+    });
+
+    // Return immediate acknowledgement
     Ok(Json(serde_json::json!({
         "response_type": "ephemeral",
-        "text": response,
+        "text": "Processing your request... I'll follow up with results shortly.",
     })))
 }
 
@@ -331,7 +335,7 @@ async fn receive_github(
 
 // ── Command Router ───────────────────────────────────────────────────────
 
-/// Route a parsed Slack command to the appropriate action.
+/// Route a parsed command from a Slack mention event.
 async fn handle_slack_command(
     event: &groose_integrations::slack::VerifiedSlackEvent,
     cmd: &SlackCommand,
@@ -340,7 +344,28 @@ async fn handle_slack_command(
     let channel_id = event.channel_id.as_deref().unwrap_or("unknown");
     let user_id = event.user_id.as_deref().unwrap_or("unknown");
     let bot_token = state.slack_verifier.as_ref().map(|v| v.config().bot_token.clone());
+    handle_command_impl(cmd, channel_id, user_id, &bot_token, state).await;
+}
 
+/// Route a parsed command from a slash command.
+async fn handle_slash_command_impl(
+    cmd: &SlackCommand,
+    channel_id: &str,
+    user_id: &str,
+    state: &Arc<AppState>,
+) {
+    let bot_token = state.slack_verifier.as_ref().map(|v| v.config().bot_token.clone());
+    handle_command_impl(cmd, channel_id, user_id, &bot_token, state).await;
+}
+
+/// Core command handler shared by mentions and slash commands.
+async fn handle_command_impl(
+    cmd: &SlackCommand,
+    channel_id: &str,
+    user_id: &str,
+    bot_token: &Option<String>,
+    _state: &Arc<AppState>,
+) {
     match cmd {
         SlackCommand::FindDocumentation { topic, repo } => {
             tracing::info!(
@@ -352,7 +377,7 @@ async fn handle_slack_command(
                 "SME: finding documentation"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "📚 *Finding documentation for:* `{}`\n🔍 *In repository:* `{}`\n\nI'll search the codebase and documentation now.",
@@ -372,7 +397,7 @@ async fn handle_slack_command(
                 "SME: taking story"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "🎯 *Taking story:* {} on `{}`\n⏳ Creating implementation plan...\n\nI'll analyze the issue, implement the changes, run tests, and open a PR.",
@@ -391,7 +416,7 @@ async fn handle_slack_command(
                 "SME: reviewing PR"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "🔍 *Reviewing PR #{}* on `{}`\n\nI'll examine the changes, run tests, check for issues, and provide a detailed review.",
@@ -410,7 +435,7 @@ async fn handle_slack_command(
                 "SME: analyzing codebase"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n\nI'll examine the codebase structure, identify affected modules, and provide a scope estimate.",
@@ -429,7 +454,7 @@ async fn handle_slack_command(
                 "creating task"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting implementation...",
@@ -440,7 +465,7 @@ async fn handle_slack_command(
 
         SlackCommand::UseSkill { skill } => {
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!("🧠 *Skill activated:* `{}`", skill),
             ).await;
@@ -448,7 +473,7 @@ async fn handle_slack_command(
 
         SlackCommand::Status => {
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 "📋 *Status*\nNo active tasks in this channel.",
             ).await;
@@ -456,7 +481,7 @@ async fn handle_slack_command(
 
         SlackCommand::Pause => {
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 "⏸️ *Pausing task...*",
             ).await;
@@ -464,7 +489,7 @@ async fn handle_slack_command(
 
         SlackCommand::Resume => {
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 "▶️ *Resuming task...*",
             ).await;
@@ -472,7 +497,7 @@ async fn handle_slack_command(
 
         SlackCommand::Cancel => {
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 "🛑 *Cancelling task...*",
             ).await;
@@ -487,7 +512,7 @@ async fn handle_slack_command(
                 "unrecognized command"
             );
             post_slack_message(
-                &bot_token,
+                bot_token,
                 channel_id,
                 &format!(
                     "🤔 I didn't understand that. Try:\n\
