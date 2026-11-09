@@ -225,7 +225,7 @@ impl SlashCommandPayload {
                 let text = format!("analyze {}", self.text);
                 parse_command(&text)
             }
-            "/status" => SlackCommand::Status,
+            "/status" | "/buddystatus" => SlackCommand::Status,
             "/pause" => SlackCommand::Pause,
             "/resume" | "/continue" => SlackCommand::Resume,
             "/cancel" | "/abort" => SlackCommand::Cancel,
