@@ -1,0 +1,29 @@
+[package]
+name = "groose-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["DJinn <dev@djinn.com>"]
+license.workspace = true
+description = "Groose CLI - Event-driven autonomous software engineering agent"
+
+[[bin]]
+path = "src/main.rs"
+name = "groose"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time", "process", "fs", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["compat"] }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+groose-task = { path = "../groose-task" }
+groose-execution = { path = "../groose-execution" }
+uuid = { workspace = true }

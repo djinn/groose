@@ -1,0 +1,25 @@
+[package]
+name = "groose-task"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["DJinn <dev@djinn.com>"]
+license.workspace = true
+description = "Groose task specification, state machine, events, and policy"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
+tokio-util = { workspace = true, features = ["compat"] }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+strum = { workspace = true }

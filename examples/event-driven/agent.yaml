@@ -1,0 +1,21 @@
+version: 1
+name: backend-engineer
+model:
+  provider: configurable
+  primary: configured-model-id
+skills:
+  - developer
+  - rust-engineer
+tools:
+  allow:
+    - filesystem
+    - shell
+    - git
+    - github
+execution:
+  autonomous: true
+  checkpoint_every_iterations: 3
+  max_iterations: 40
+delivery:
+  create_pr: true
+  auto_merge: false

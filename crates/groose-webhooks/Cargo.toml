@@ -1,0 +1,31 @@
+[package]
+name = "groose-webhooks"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Groose webhook server for Slack and GitHub integration"
+
+[[bin]]
+path = "src/main.rs"
+name = "groose-webhooks"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "rt-multi-thread", "time", "process", "fs", "signal"] }
+axum = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+groose-integrations = { path = "../groose-integrations" }
+uuid = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true }
+hex = "0.4"
+reqwest = { workspace = true }
+urlencoding = { workspace = true }

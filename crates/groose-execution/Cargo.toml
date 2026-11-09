@@ -1,0 +1,26 @@
+[package]
+name = "groose-execution"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["DJinn <dev@djinn.com>"]
+license.workspace = true
+description = "Groose coding engine, workspace, checkpoints, verifier, and control"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time", "process", "fs", "io-util"] }
+tokio-util = { workspace = true, features = ["compat"] }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+tempfile = { workspace = true }
+groose-task = { path = "../groose-task" }

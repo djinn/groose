@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "task_id": "task_01",
+  "type": "implement",
+  "repository": {
+    "provider": "github",
+    "name": "org/payments",
+    "base_ref": "main",
+    "base_sha": null
+  },
+  "instruction": {
+    "goal": "Implement a refund workflow for the payment system",
+    "acceptance_criteria": [
+      "Refund API endpoint exists",
+      "Regression tests pass",
+      "Existing payment API remains compatible",
+      "Refund amount does not exceed original charge"
+    ]
+  },
+  "agent": {
+    "profile": "default-engineer",
+    "skills": ["developer", "rust-engineer"]
+  },
+  "execution": {
+    "mode": "autonomous",
+    "max_iterations": 40,
+    "max_cost_usd": 12.0,
+    "timeout_minutes": 90
+  },
+  "delivery": {
+    "strategy": "pull_request",
+    "merge": "human_approval"
+  },
+  "origin": {
+    "source": "cli",
+    "event_id": "cli-001",
+    "conversation_id": ""
+  }
+}

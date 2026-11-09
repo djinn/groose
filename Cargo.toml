@@ -32,7 +32,7 @@ base64 = { version = "0.23.0", default-features = false, features = ["std"] }
 bytes = { version = "1.10.1", default-features = false, features = ["std"] }
 candle-core = { version = "0.11", default-features = false }
 candle-nn = { version = "0.11", default-features = false }
-chrono = { version = "0.4.44", default-features = false, features = ["serde", "std"] }
+chrono = { version = "0.4.44", default-features = false, features = ["serde", "std", "clock"] }
 clap = { version = "4.1.14", default-features = false, features = ["derive", "std", "help", "suggestions", "usage", "color", "error-context"] }
 dirs = { version = "7", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
@@ -51,7 +51,7 @@ lru = { version = "0.18", default-features = false }
 once_cell = { version = "1.21.3", default-features = false, features = ["std"] }
 rand = "0.10.1"
 regex = { version = "1.12.3", default-features = false, features = ["std"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["multipart", "form"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["multipart", "form", "json"] }
 rustls = { version = "0.23.31", default-features = false, features = ["aws_lc_rs", "std"] }
 schemars = { version = "1.0.2", default-features = false, features = ["std"] }
 serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
@@ -68,7 +68,7 @@ tower-http = { version = "0.7.0", default-features = false }
 tracing = { version = "0.1.43", default-features = false, features = ["std"] }
 tracing-appender = { version = "0.2.1", default-features = false }
 tracing-futures = { version = "0.2.4", default-features = false, features = ["futures-03", "std", "std-future"] }
-tracing-subscriber = { version = "0.3.22", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.22", default-features = false, features = ["std", "env-filter", "fmt"] }
 urlencoding = { version = "2.1", default-features = false }
 uuid = { version = "1.23", default-features = false, features = ["v4", "std"] }
 webbrowser = { version = "1", default-features = false }
@@ -78,6 +78,8 @@ wiremock = { version = "0.6", default-features = false }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 serial_test = { version = "4", default-features = false }
 sha2 = { version = "0.11", default-features = false }
+hmac = { version = "0.12", default-features = false, features = ["std"] }
+hex = { version = "0.4", default-features = false, features = ["std"] }
 shell-words = { version = "1", default-features = false, features = ["std"] }
 snap = { version = "1", default-features = false }
 test-case = { version = "3", default-features = false }

@@ -1,0 +1,29 @@
+[package]
+name = "groose-integrations"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["DJinn <dev@djinn.com>"]
+license.workspace = true
+description = "Groose integration trust, authentication, and event handling for Slack and GitHub"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["serde", "std", "clock"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"
+hmac = "0.12"
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+groose-task = { path = "../groose-task" }
+lru = { workspace = true }

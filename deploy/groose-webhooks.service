@@ -1,0 +1,19 @@
+[Unit]
+Description=Groose webhook server
+Documentation=https://github.com/djinn/groose
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/groose
+EnvironmentFile=/etc/groose/env
+ExecStart=/opt/groose/bin/groose-webhooks
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
