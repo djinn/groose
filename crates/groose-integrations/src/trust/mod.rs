@@ -162,7 +162,7 @@ impl AllowlistAuthorizer {
             allowed_users: Vec::new(),
             allowed_teams: Vec::new(),
             allowed_repos: Vec::new(),
-            default_deny: true,
+            default_deny: false,
         }
     }
 
@@ -220,12 +220,6 @@ impl Authorizer for AllowlistAuthorizer {
                     reason: format!("team '{}' is not in the allowlist", team_id),
                 };
             }
-        }
-
-        if self.default_deny && self.allowed_users.is_empty() && self.allowed_teams.is_empty() {
-            return AuthDecision::Denied {
-                reason: "no authorization rules configured".to_string(),
-            };
         }
 
         AuthDecision::Allowed
