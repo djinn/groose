@@ -39,10 +39,17 @@ pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &st
     }
 
     let chat_resp: serde_json::Value = resp.json().await?;
-    let text = chat_resp["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    tracing::info!("call_deepseek: full response keys={:?}", chat_resp.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    let message = &chat_resp["choices"][0]["message"];
+    let content = message["content"].as_str().unwrap_or("").to_string();
+    let reasoning = message["reasoning_content"].as_str().unwrap_or("").to_string();
+
+    let text = if content.is_empty() && !reasoning.is_empty() {
+        tracing::info!("call_deepseek: using reasoning_content instead of content");
+        reasoning
+    } else {
+        content
+    };
 
     if text.is_empty() {
         tracing::warn!("DeepSeek returned empty content");
