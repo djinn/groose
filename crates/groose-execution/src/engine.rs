@@ -228,6 +228,12 @@ impl CodingEngine {
             conversation.push(conv_entry);
             state.conversation_state = Some(serde_json::to_value(&conversation).unwrap_or_default());
 
+            // If the model provided a substantive response, we're done
+            // (avoids overwriting the real answer with "what next?" responses)
+            if model_response.len() > 100 {
+                break;
+            }
+
             // 4. Evaluate results - check if model declared completion
             state.iteration += 1;
             state.current_step = format!("iteration_{}", state.iteration);
@@ -283,15 +289,16 @@ impl CodingEngine {
             })
             .await;
 
-        // Extract final output from conversation state
+        // Extract final output from conversation state — take first substantive response
         let final_output: Option<String> = state
             .conversation_state
             .as_ref()
             .and_then(|v| serde_json::from_value::<Vec<serde_json::Value>>(v.clone()).ok())
             .and_then(|conv| {
-                conv.last()
-                    .and_then(|entry| entry.get("content"))
-                    .and_then(|c| c.as_str())
+                conv.iter()
+                    .filter_map(|entry| entry.get("content"))
+                    .filter_map(|c| c.as_str())
+                    .find(|s| s.len() > 100)
                     .map(|s| s.to_string())
             });
 
