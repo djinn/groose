@@ -689,7 +689,7 @@ fn render_blocks(text: &str) -> Vec<serde_json::Value> {
         vec![
             json!({
                 "type": "context",
-                "elements": [{ "type": "mrkdwn", "text": format!("{} {}", &text[..2], status_text) }]
+                "elements": [{ "type": "mrkdwn", "text": format!("{} {}", text.chars().next().unwrap_or(' '), status_text) }]
             }),
         ]
     } else if text.starts_with("🤔") {

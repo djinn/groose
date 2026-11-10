@@ -72,7 +72,7 @@ pub fn parse_command(text: &str) -> SlackCommand {
     let lower = text.to_lowercase();
 
     // ── find documentation ──────────────────────────────────────────
-    let find_prefixes = ["find documentation for", "find docs for", "documentation for"];
+    let find_prefixes = ["find documentation for", "find docs for", "documentation for", "find docs on", "find documentation on", "documentation on", "find docs ", "find documentation "];
     if let Some(_) = find_prefixes.iter().find(|p| lower.starts_with(*p)) {
         let prefix = find_prefixes.iter().find(|p| lower.starts_with(*p)).unwrap();
         let rest = text[prefix.len()..].trim();
