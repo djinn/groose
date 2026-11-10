@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 mod deepseek;
 mod intent;
+mod slackfmt;
 
 use groose_integrations::{
     github::{GitHubConfig, GitHubEventVerifier},
@@ -456,8 +457,15 @@ async fn handle_command_impl(
     // For general chat / unknown, just ask the model directly
     if intent.action == ActionType::GeneralChat {
         let system = "You are a helpful software engineering assistant. Answer concisely.";
-        if let Ok(answer) = crate::deepseek::call_deepseek(&deepseek_key, system, &user_message).await {
-            post_slack_message(bot_token, channel_id, &answer).await;
+        post_slack_message(bot_token, channel_id, "⏳ Thinking...").await;
+        match crate::deepseek::call_deepseek(&deepseek_key, system, &user_message).await {
+            Ok(answer) => {
+                post_slack_message(bot_token, channel_id, &answer).await;
+            }
+            Err(e) => {
+                tracing::warn!("DeepSeek general chat error: {:?}", e);
+                post_slack_message(bot_token, channel_id, &format!("⚠️ Error: {}", e)).await;
+            }
         }
         return;
     }
@@ -474,13 +482,14 @@ async fn handle_command_impl(
                 "You are a helpful software engineering assistant. Answer concisely and accurately."
             }
         };
+        post_slack_message(bot_token, channel_id, &format!("⏳ Searching for: {}", intent.query)).await;
         match crate::deepseek::call_deepseek(&deepseek_key, system, &intent.query).await {
             Ok(answer) => {
                 post_slack_message(bot_token, channel_id, &answer).await;
             }
             Err(e) => {
                 tracing::warn!("DeepSeek error: {:?}", e);
-                post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request.").await;
+                post_slack_message(bot_token, channel_id, &format!("⚠️ Error: {}", e)).await;
             }
         }
         return;
@@ -664,12 +673,25 @@ async fn post_slack_message(bot_token: &Option<String>, channel: &str, text: &st
         None => return,
     };
 
+    // Convert Markdown to Slack mrkdwn before posting
+    let slack_text = crate::slackfmt::to_slack_mrkdwn(text);
+
     let client = reqwest::Client::new();
     let payload = serde_json::json!({
         "channel": channel,
-        "text": strip_markdown(text),
-        "blocks": render_blocks(text),
+        "text": strip_markdown(&slack_text),
+        "blocks": render_blocks(&slack_text),
     });
+
+    // If blocks are empty, don't send them (avoid invalid_blocks error)
+    let payload = if payload["blocks"].as_array().map(|b| b.is_empty()).unwrap_or(false) {
+        serde_json::json!({
+            "channel": channel,
+            "text": strip_markdown(text),
+        })
+    } else {
+        payload
+    };
 
     match client
         .post("https://slack.com/api/chat.postMessage")
@@ -746,21 +768,9 @@ fn render_blocks(text: &str) -> Vec<serde_json::Value> {
             json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }),
         ]
     } else {
-        // Generic output from model — use section with mrkdwn
-        let lines: Vec<&str> = text.lines().collect();
-        let (title, body) = if lines.len() > 1 {
-            (lines[0], lines[1..].join("\n"))
-        } else {
-            ("Response", text.to_string())
-        };
-        let mut blocks = vec![
-            json!({ "type": "section", "text": { "type": "mrkdwn", "text": format!("*{}*", title) } }),
-        ];
-        if !body.is_empty() {
-            blocks.push(json!({ "type": "divider" }));
-            blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": body } }));
-        }
-        blocks
+        // Generic output from model — send as plain text to avoid block issues
+        // Blocks are only used for structured messages (docs, review, etc.)
+        vec![]
     }
 }
 
@@ -769,6 +779,7 @@ fn strip_markdown(text: &str) -> String {
     text.replace('*', "")
         .replace('`', "")
         .replace('_', "")
+        .replace('"', "'")
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())

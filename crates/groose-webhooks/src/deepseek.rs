@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 
 /// Simple direct DeepSeek call for general chat responses.
 pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &str) -> Result<String> {
+    tracing::info!("call_deepseek: starting with key={}.., prompt_len={}", &api_key[..8], user_message.len());
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
+    tracing::info!("call_deepseek: client built");
 
     let request = serde_json::json!({
         "model": "deepseek-flash",
