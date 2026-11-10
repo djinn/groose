@@ -610,7 +610,7 @@ async fn run_groose_engine(
 
 // ── Slack Message Posting ────────────────────────────────────────────────
 
-/// Post a message to a Slack channel using the bot token.
+/// Post a message to a Slack channel using native Blocks API layout.
 async fn post_slack_message(bot_token: &Option<String>, channel: &str, text: &str) {
     let token = match bot_token {
         Some(t) => t,
@@ -620,8 +620,8 @@ async fn post_slack_message(bot_token: &Option<String>, channel: &str, text: &st
     let client = reqwest::Client::new();
     let payload = serde_json::json!({
         "channel": channel,
-        "text": text,
-        "mrkdwn": true,
+        "text": strip_markdown(text),
+        "blocks": render_blocks(text),
     });
 
     match client
@@ -642,4 +642,92 @@ async fn post_slack_message(bot_token: &Option<String>, channel: &str, text: &st
             tracing::warn!("Failed to post Slack message: {:?}", e);
         }
     }
+}
+
+/// Render a message into Slack Blocks API layout based on content type.
+fn render_blocks(text: &str) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let text = text.trim();
+
+    // Detect message type by prefix emoji
+    if text.starts_with("📚") || text.starts_with("📖") {
+        let body = text
+            .lines()
+            .skip_while(|l| l.starts_with("📚") || l.starts_with("📖") || l.starts_with("🔍"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        vec![
+            json!({ "type": "header", "text": { "type": "plain_text", "text": "📚 Documentation", "emoji": true } }),
+            json!({ "type": "divider" }),
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": body } }),
+        ]
+    } else if text.starts_with("🎯") {
+        vec![
+            json!({ "type": "header", "text": { "type": "plain_text", "text": "🎯 Implementing Story", "emoji": true } }),
+            json!({ "type": "divider" }),
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }),
+        ]
+    } else if text.starts_with("🔍") || text.starts_with("🔎") {
+        let body = text.lines().skip(1).collect::<Vec<_>>().join("\n");
+        vec![
+            json!({ "type": "header", "text": { "type": "plain_text", "text": "🔍 PR Review", "emoji": true } }),
+            json!({ "type": "divider" }),
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": body } }),
+        ]
+    } else if text.starts_with("📊") {
+        vec![
+            json!({ "type": "header", "text": { "type": "plain_text", "text": "📊 Analysis & Estimate", "emoji": true } }),
+            json!({ "type": "divider" }),
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }),
+        ]
+    } else if text.starts_with("🤖") || text.starts_with("⏳") || text.starts_with("✅") || text.starts_with("❌") || text.starts_with("⚠️") {
+        let status_text = text
+            .trim_start_matches(|c: char| !c.is_alphanumeric() && c != ' ')
+            .trim();
+        vec![
+            json!({
+                "type": "context",
+                "elements": [{ "type": "mrkdwn", "text": format!("{} {}", &text[..2], status_text) }]
+            }),
+        ]
+    } else if text.starts_with("🤔") {
+        vec![
+            json!({ "type": "header", "text": { "type": "plain_text", "text": "🤔 Need Help?", "emoji": true } }),
+            json!({ "type": "divider" }),
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }),
+        ]
+    } else {
+        // Generic output from model — use section with mrkdwn
+        let lines: Vec<&str> = text.lines().collect();
+        let (title, body) = if lines.len() > 1 {
+            (lines[0], lines[1..].join("\n"))
+        } else {
+            ("Response", text.to_string())
+        };
+        let mut blocks = vec![
+            json!({ "type": "section", "text": { "type": "mrkdwn", "text": format!("*{}*", title) } }),
+        ];
+        if !body.is_empty() {
+            blocks.push(json!({ "type": "divider" }));
+            blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": body } }));
+        }
+        blocks
+    }
+}
+
+/// Strip markdown for Slack's fallback text field (max 300 chars).
+fn strip_markdown(text: &str) -> String {
+    text.replace('*', "")
+        .replace('`', "")
+        .replace('_', "")
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(300)
+        .collect()
 }
