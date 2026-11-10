@@ -209,7 +209,14 @@ impl CodingEngine {
                 )
             };
 
-            let model_response = model.complete(&model_prompt, &tools_list).await?;
+            let model_response = crate::dsml::run_tool_loop(
+                model,
+                workspace,
+                &model_prompt,
+                &tools_list,
+                10,
+            )
+            .await?;
             tracing::info!(iteration = state.iteration, response_len = model_response.len(), "model response received");
 
             events

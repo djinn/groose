@@ -1,5 +1,6 @@
 pub mod checkpoints;
 pub mod control;
+pub mod dsml;
 pub mod engine;
 pub mod verifier;
 pub mod workspace;
