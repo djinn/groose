@@ -44,6 +44,11 @@ pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &st
         .unwrap_or("")
         .to_string();
 
+    if text.is_empty() {
+        tracing::warn!("DeepSeek returned empty content");
+        anyhow::bail!("DeepSeek returned empty response");
+    }
+
     Ok(text)
 }
 
