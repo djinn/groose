@@ -555,7 +555,7 @@ async fn handle_command_impl(
         )
     };
 
-    run_groose_engine(bot_token, channel_id, &deepseek_key, &agent_prompt).await;
+    run_groose_engine(bot_token, channel_id, &deepseek_key, &agent_prompt, intent.repo.as_deref()).await;
 }
 
 /// Run the groose coding engine with DeepSeek as the model provider.
@@ -564,6 +564,7 @@ async fn run_groose_engine(
     channel_id: &str,
     deepseek_key: &str,
     goal: &str,
+    repo: Option<&str>,
 ) {
     let model = crate::deepseek::DeepSeekProvider::new(deepseek_key.to_string(), None);
 
@@ -574,7 +575,7 @@ async fn run_groose_engine(
         r#type: "implement".to_string(),
         repository: groose_task::RepositorySpec {
             provider: "github".to_string(),
-            name: "djinn/groose".to_string(),
+            name: repo.unwrap_or("").to_string(),
             base_ref: "main".to_string(),
             base_sha: None,
         },
@@ -609,15 +610,25 @@ async fn run_groose_engine(
 
     let ctx = ExecutionContext {
         task: task.clone(),
-        workspace_root: std::path::PathBuf::from("/opt/groose/workspace"),
+        workspace_root: std::path::PathBuf::from("/tmp"),
         max_iterations: 10,
         max_cost_usd: 2.0,
         timeout: std::time::Duration::from_secs(1800),
         checkpoint_every: 3,
     };
 
-    let workspace_root = std::path::PathBuf::from("/opt/groose/workspace");
-    let workspace = groose_execution::workspace::LocalWorkspace::new(workspace_root);
+    // Isolated temp workspace per task — created before the run,
+    // deleted after (whether the task succeeds or fails).
+    let (workspace, workspace_path) = match groose_execution::workspace::TempWorkspace::new() {
+        Ok((ws, path)) => (ws, path),
+        Err(e) => {
+            tracing::warn!("Failed to create temp workspace: {:?}", e);
+            post_slack_message(bot_token, channel_id, "⚠️ Failed to create workspace.").await;
+            return;
+        }
+    };
+    tracing::info!(workspace = %workspace_path.display(), "created temp workspace");
+
     let control = groose_execution::control::NoopControlReceiver;
     let events = groose_execution::LoggingEventSink;
     let checkpoints = match groose_execution::checkpoints::FileCheckpointStore::new(std::path::PathBuf::from("/opt/groose/checkpoints")) {

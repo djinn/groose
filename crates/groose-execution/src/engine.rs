@@ -118,19 +118,36 @@ impl CodingEngine {
 
         let start_time = std::time::Instant::now();
 
-        // Clone repo if specified
+        // Clone repo if specified — authenticated for private repos when
+        // GitHub App credentials are available.
         let has_repo = !task.repository.name.is_empty()
-            && task.repository.name != "unknown"
-            && task.repository.name != "djinn/groose";
+            && task.repository.name != "unknown";
         if has_repo && state.iteration == 0 {
-            let clone_url = format!(
-                "https://github.com/{}.git",
-                task.repository.name
-            );
-            workspace
-                .run_command("git", &["clone", &clone_url, "."])
-                .await
-                .ok();
+            let clone_url = authenticated_clone_url(&task.repository.name).await;
+            let clone_result = workspace
+                .run_command("git", &["clone", "--depth", "50", &clone_url, "."])
+                .await;
+
+            match clone_result {
+                Ok(out) => {
+                    tracing::info!(repo = %task.repository.name, "cloned repository");
+                    if !out.is_empty() {
+                        tracing::debug!(clone_output = %out, "git clone output");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(repo = %task.repository.name, error = %e, "git clone failed — agent will work with an empty workspace");
+                    events
+                        .emit(EngineEvent::Observation {
+                            task_id: task.task_id.clone(),
+                            observation: format!(
+                                "Warning: could not clone {} ({}). Working without the repo.",
+                                task.repository.name, e
+                            ),
+                        })
+                        .await;
+                }
+            }
         }
 
         // Build the conversation from state
@@ -424,4 +441,44 @@ impl ModelProvider for ShellModelProvider {
     fn name(&self) -> &str {
         &self.name
     }
+}
+
+/// Build a clone URL for a repo, embedding credentials when available.
+///
+/// Priority:
+/// 1. `GITHUB_TOKEN` env var (classic PAT or fine-grained token)
+/// 2. GitHub App installation token (from `GITHUB_APP_ID` + `GITHUB_PRIVATE_KEY_PATH`)
+/// 3. Plain HTTPS URL (works for public repos only)
+async fn authenticated_clone_url(repo: &str) -> String {
+    // 1. Static token
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        if !token.is_empty() {
+            return format!("https://x-access-token:{}@github.com/{}.git", token, repo);
+        }
+    }
+
+    // 2. GitHub App installation token
+    if let (Ok(app_id), Ok(key_path)) = (
+        std::env::var("GITHUB_APP_ID"),
+        std::env::var("GITHUB_PRIVATE_KEY_PATH"),
+    ) {
+        if !app_id.is_empty() && !key_path.is_empty() {
+            let api_base = std::env::var("GITHUB_API_BASE_URL")
+                .unwrap_or_else(|_| "https://api.github.com".to_string());
+            match crate::github_auth::get_installation_token(&app_id, &key_path, &api_base).await {
+                Ok(token) => {
+                    return format!(
+                        "https://x-access-token:{}@github.com/{}.git",
+                        token, repo
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to get GitHub App installation token, falling back to unauthenticated clone");
+                }
+            }
+        }
+    }
+
+    // 3. Unauthenticated (public repos only)
+    format!("https://github.com/{}.git", repo)
 }

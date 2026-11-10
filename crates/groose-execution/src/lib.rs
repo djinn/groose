@@ -2,6 +2,7 @@ pub mod checkpoints;
 pub mod control;
 pub mod dsml;
 pub mod engine;
+pub mod github_auth;
 pub mod verifier;
 pub mod workspace;
 
