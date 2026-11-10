@@ -494,7 +494,13 @@ async fn handle_command_impl(
         return;
     }
 
-    // Needs a repo — use the full groose coding engine
+    // Needs a repo — pre-flight access check, then the full groose coding engine
+    if let Some(repo) = intent.repo.as_deref() {
+        if !ensure_repo_access(bot_token, channel_id, repo).await {
+            return;
+        }
+    }
+
     let prompt = match intent.action {
         ActionType::FindDocumentation => {
             format!(
@@ -556,6 +562,80 @@ async fn handle_command_impl(
     };
 
     run_groose_engine(bot_token, channel_id, &deepseek_key, &agent_prompt, intent.repo.as_deref()).await;
+}
+
+/// Check whether the GitHub App can access the repo; if not, post an
+/// install link to Slack. Returns true when we have access.
+async fn ensure_repo_access(
+    bot_token: &Option<String>,
+    channel_id: &str,
+    repo: &str,
+) -> bool {
+    let (app_id, key_path) = match (
+        std::env::var("GITHUB_APP_ID"),
+        std::env::var("GITHUB_PRIVATE_KEY_PATH"),
+    ) {
+        (Ok(a), Ok(k)) if !a.is_empty() && !k.is_empty() => (a, k),
+        _ => return true, // No GitHub App configured — let clone fail naturally
+    };
+
+    let api_base = std::env::var("GITHUB_API_BASE_URL")
+        .unwrap_or_else(|_| "https://api.github.com".to_string());
+
+    let accessible = match groose_execution::github_auth::check_repo_access(
+        &app_id, &key_path, &api_base, repo,
+    ).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(repo = %repo, error = %e, "repo access check failed, proceeding anyway");
+            return true;
+        }
+    };
+
+    if accessible {
+        return true;
+    }
+
+    let install_url = "https://github.com/apps/groose-agent/installations/new";
+
+    let blocks = serde_json::json!([
+        {
+            "type": "header",
+            "text": { "type": "plain_text", "text": "🔒 Repository Access Required", "emoji": true }
+        },
+        { "type": "divider" },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": format!(
+                    "I can't access `{}` yet. Install the *groose-agent* GitHub App on that repository, then ask again.",
+                    repo
+                )
+            }
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": { "type": "plain_text", "text": "Install groose-agent", "emoji": true },
+                    "url": format!("https://github.com/apps/groose-agent/installations/new"),
+                    "style": "primary"
+                }
+            ]
+        }
+    ]);
+
+    post_slack_blocks(
+        bot_token,
+        channel_id,
+        &format!("Install groose-agent to access {}", repo),
+        blocks,
+    ).await;
+
+    tracing::info!(repo = %repo, install_url = %install_url, "posted repo install link");
+    false
 }
 
 /// Run the groose coding engine with DeepSeek as the model provider.
@@ -793,6 +873,45 @@ fn render_blocks(text: &str) -> Vec<serde_json::Value> {
         }
 
         blocks
+    }
+}
+
+/// Post a message to a Slack channel with a pre-built Blocks payload.
+async fn post_slack_blocks(
+    bot_token: &Option<String>,
+    channel: &str,
+    fallback_text: &str,
+    blocks: serde_json::Value,
+) {
+    let token = match bot_token {
+        Some(t) => t,
+        None => return,
+    };
+
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "channel": channel,
+        "text": fallback_text,
+        "blocks": blocks,
+    });
+
+    match client
+        .post("https://slack.com/api/chat.postMessage")
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let body: Value = resp.json().await.unwrap_or_default();
+            if body.get("ok").and_then(|o| o.as_bool()) != Some(true) {
+                tracing::warn!("Slack API error: {:?}", body.get("error"));
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to post Slack message: {:?}", e);
+        }
     }
 }
 

@@ -108,3 +108,31 @@ fn base64url(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
+
+/// Check whether the GitHub App can access a repository.
+///
+/// Returns Ok(true) if accessible, Ok(false) if the app is not installed
+/// on the repo (404) or the repo doesn't exist, Err on other API failures.
+pub async fn check_repo_access(
+    app_id: &str,
+    private_key_path: &str,
+    api_base: &str,
+    repo: &str,
+) -> Result<bool> {
+    let token = get_installation_token(app_id, private_key_path, api_base).await?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/repos/{}", api_base, repo))
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "groose-agent")
+        .send()
+        .await?;
+
+    match resp.status().as_u16() {
+        200 => Ok(true),
+        404 | 403 => Ok(false),
+        s => anyhow::bail!("GitHub API error {} checking repo access", s),
+    }
+}
