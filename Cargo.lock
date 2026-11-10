@@ -4741,6 +4741,7 @@ dependencies = [
  "groose-integrations",
  "groose-task",
  "hex",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

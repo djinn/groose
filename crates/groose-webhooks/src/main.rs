@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 mod deepseek;
+mod intent;
 
 use groose_integrations::{
     github::{GitHubConfig, GitHubEventVerifier},
@@ -28,6 +29,8 @@ use groose_execution::control::NoopControlReceiver;
 use groose_execution::checkpoints::FileCheckpointStore;
 use groose_execution::verifier::BasicVerifier;
 use groose_task::TaskSpec;
+
+use crate::intent::ActionType;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -388,119 +391,139 @@ async fn handle_command_impl(
         }
     };
 
-    match cmd {
+    // Convert the parsed command to a user message string
+    let user_message = match cmd {
         SlackCommand::FindDocumentation { topic, repo } => {
-            tracing::info!(
-                command = "find_documentation",
-                topic = %topic,
-                repo = ?repo,
-                channel = %channel_id,
-                user = %user_id,
-                "SME: routing through groose engine"
-            );
-            post_slack_message(bot_token, channel_id, &format!(
-                "📚 *Searching for documentation on:* `{}`\n🔍 *In repository:* `{}`\n\nStarting groose agent with DeepSeek...",
-                topic, repo.as_deref().unwrap_or("(all repositories)")
-            )).await;
-
-            run_groose_engine(
-                bot_token, channel_id, &deepseek_key,
-                &format!("Find documentation about: {}. Search the codebase, README files, docs directories, and explain the topic thoroughly with examples.", topic),
-            ).await;
+            format!("find documentation for {} in {}", topic, repo.as_deref().unwrap_or("general knowledge"))
         }
-
         SlackCommand::TakeStory { repo, issue } => {
-            tracing::info!(
-                command = "take_story",
-                repo = %repo,
-                issue = %issue,
-                channel = %channel_id,
-                user = %user_id,
-                "SME: routing through groose engine"
-            );
-            post_slack_message(bot_token, channel_id, &format!(
-                "🎯 *Taking story:* {} on `{}`\n⏳ Starting groose agent to analyze and implement...",
-                issue, repo
-            )).await;
-
-            run_groose_engine(
-                bot_token, channel_id, &deepseek_key,
-                &format!("Implement issue {} on repository {}. Clone the repo, analyze the code, create a plan, implement the changes, write tests, and prepare a PR.", issue, repo),
-            ).await;
+            format!("implement {} on {}", issue, repo)
         }
-
         SlackCommand::ReviewPullRequest { repo, pr_number } => {
-            tracing::info!(
-                command = "review_pr",
-                repo = %repo,
-                pr_number = %pr_number,
-                channel = %channel_id,
-                user = %user_id,
-                "SME: routing through groose engine"
-            );
-            post_slack_message(bot_token, channel_id, &format!(
-                "🔍 *Reviewing PR #{}* on `{}`\n⏳ Starting groose agent to analyze changes...",
-                pr_number, repo
-            )).await;
-
-            run_groose_engine(
-                bot_token, channel_id, &deepseek_key,
-                &format!("Review pull request #{} on repository {}. Examine the code changes, run tests, check for security issues, and provide detailed feedback.", pr_number, repo),
-            ).await;
+            format!("review pr on {} #{}", repo, pr_number)
         }
-
         SlackCommand::Analyze { repo, goal } => {
-            tracing::info!(
-                command = "analyze",
-                repo = %repo,
-                goal = %goal,
-                channel = %channel_id,
-                user = %user_id,
-                "SME: routing through groose engine"
-            );
-            post_slack_message(bot_token, channel_id, &format!(
-                "📊 *Analyzing:* `{}`\n🎯 *Goal:* {}\n⏳ Starting groose agent for scope estimation...",
-                repo, goal
-            )).await;
-
-            run_groose_engine(
-                bot_token, channel_id, &deepseek_key,
-                &format!("Analyze repository {} for the following goal: {}. Trace through the codebase, identify affected modules, assess complexity, estimate effort, and identify risks.", repo, goal),
-            ).await;
+            format!("analyze {} for {}", repo, goal)
         }
-
         SlackCommand::WorkOn { repo, instruction } => {
-            post_slack_message(bot_token, channel_id, &format!(
-                "⚡ *Working on:* `{}`\n📝 *Instruction:* {}\n\nStarting groose agent...", repo, instruction
-            )).await;
-            run_groose_engine(bot_token, channel_id, &deepseek_key, &format!("On repository {}: {}", repo, instruction)).await;
+            format!("work on {}: {}", repo, instruction)
         }
-
         SlackCommand::UseSkill { skill } => {
-            post_slack_message(bot_token, channel_id, &format!("🧠 *Skill activated:* `{}`", skill)).await;
+            format!("use skill {}", skill)
         }
+        SlackCommand::Status => "status".to_string(),
+        SlackCommand::Pause => "pause".to_string(),
+        SlackCommand::Resume => "resume".to_string(),
+        SlackCommand::Cancel => "cancel".to_string(),
+        SlackCommand::Unknown { text } => text.clone(),
+    };
 
-        SlackCommand::Status => {
-            post_slack_message(bot_token, channel_id, "📋 *Status*\nNo active tasks in this channel.").await;
-        }
+    // Classify intent using the model
+    let intent = crate::intent::classify_intent(
+        &user_message,
+        Some(channel_id.to_string()),
+        Some(user_id.to_string()),
+        &deepseek_key,
+    ).await;
 
-        SlackCommand::Pause => {
-            post_slack_message(bot_token, channel_id, "⏸️ *Pausing task...*").await;
-        }
+    tracing::info!(
+        action = ?intent.action,
+        repo = ?intent.repo,
+        needs_repo = intent.needs_repo,
+        query = %intent.query,
+        "classified intent"
+    );
 
-        SlackCommand::Resume => {
-            post_slack_message(bot_token, channel_id, "▶️ *Resuming task...*").await;
-        }
+    // Show the user what we understood
+    let emoji = intent.action.emoji();
+    let label = intent.action.label();
+    let repo_str = intent.repo.as_deref().unwrap_or("(no repo)");
 
-        SlackCommand::Cancel => {
-            post_slack_message(bot_token, channel_id, "🛑 *Cancelling task...*").await;
-        }
-
-        SlackCommand::Unknown { text } => {
-            tracing::info!(command = "unknown", text = %text, "falling back to groose agent");
-            run_groose_engine(bot_token, channel_id, &deepseek_key, text).await;
-        }
+    if intent.action == ActionType::Status || intent.action == ActionType::Pause 
+        || intent.action == ActionType::Resume || intent.action == ActionType::Cancel {
+        // Simple actions - no agent needed
+        let msg = match intent.action {
+            ActionType::Status => "📋 *Status*\nNo active tasks in this channel.".to_string(),
+            ActionType::Pause => "⏸️ *Pausing task...*".to_string(),
+            ActionType::Resume => "▶️ *Resuming task...*".to_string(),
+            ActionType::Cancel => "🛑 *Cancelling task...*".to_string(),
+            _ => unreachable!(),
+        };
+        post_slack_message(bot_token, channel_id, &msg).await;
+        return;
     }
+
+    // For general chat / unknown, just ask the model directly
+    if intent.action == ActionType::GeneralChat {
+        let system = "You are a helpful software engineering assistant. Answer concisely.";
+        if let Ok(answer) = crate::deepseek::call_deepseek(&deepseek_key, system, &user_message).await {
+            post_slack_message(bot_token, channel_id, &answer).await;
+        }
+        return;
+    }
+
+    // Everything else goes through the groose agent
+    let prompt = match intent.action {
+        ActionType::FindDocumentation => {
+            format!(
+                "{} *Searching for documentation...*\n📂 *Repository:* `{}`\n\nLet me research that...",
+                emoji, repo_str
+            )
+        }
+        ActionType::Implement => {
+            format!(
+                "{} *Implementing*\n📂 *Repository:* `{}`\n⏳ Starting agent...",
+                emoji, repo_str
+            )
+        }
+        ActionType::Review => {
+            format!(
+                "{} *Reviewing*\n📂 *Repository:* `{}`\n⏳ Starting agent...",
+                emoji, repo_str
+            )
+        }
+        ActionType::Analyze => {
+            format!(
+                "{} *Analyzing*\n📂 *Repository:* `{}`\n⏳ Starting agent...",
+                emoji, repo_str
+            )
+        }
+        ActionType::WorkOn => {
+            format!(
+                "{} *Working*\n📂 *Repository:* `{}`\n⏳ Starting agent...",
+                emoji, repo_str
+            )
+        }
+        _ => unreachable!(),
+    };
+    post_slack_message(bot_token, channel_id, &prompt).await;
+
+    // Route to the agent
+    let agent_prompt = if intent.needs_repo {
+        format!(
+            "Task: {}\n\nRepository: {}\n\n{}",
+            intent.query,
+            intent.repo.as_deref().unwrap_or("(not specified)"),
+            if intent.action == ActionType::FindDocumentation {
+                "Search the codebase and documentation. Be thorough and provide examples."
+            } else if intent.action == ActionType::Implement {
+                "Clone the repo, understand the code, implement the changes, write tests."
+            } else if intent.action == ActionType::Review {
+                "Review the code changes, check for issues, provide detailed feedback."
+            } else if intent.action == ActionType::Analyze {
+                "Analyze the codebase structure, estimate effort, identify risks."
+            } else {
+                "Complete the task."
+            }
+        )
+    } else {
+        format!(
+            "Question: {}\n\nProvide a thorough answer with examples, best practices, and references.",
+            intent.query
+        )
+    };
+
+    run_groose_engine(bot_token, channel_id, &deepseek_key, &agent_prompt).await;
 }
 
 /// Run the groose coding engine with DeepSeek as the model provider.

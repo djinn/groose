@@ -32,3 +32,4 @@ urlencoding = { workspace = true }
 groose-execution = { path = "../groose-execution" }
 groose-task = { path = "../groose-task" }
 async-trait = { workspace = true }
+regex = { workspace = true }

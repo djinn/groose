@@ -6,6 +6,45 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+/// Simple direct DeepSeek call for general chat responses.
+pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    let request = serde_json::json!({
+        "model": "deepseek-flash",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 2048,
+    });
+
+    let resp = client
+        .post("https://api.deepseek.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("DeepSeek API error {}: {}", status, body);
+    }
+
+    let chat_resp: serde_json::Value = resp.json().await?;
+    let text = chat_resp["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    Ok(text)
+}
+
 /// DeepSeek model provider implementing the CodingEngine's ModelProvider trait.
 pub struct DeepSeekProvider {
     name: String,
