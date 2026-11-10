@@ -683,16 +683,6 @@ async fn post_slack_message(bot_token: &Option<String>, channel: &str, text: &st
         "blocks": render_blocks(&slack_text),
     });
 
-    // If blocks are empty, don't send them (avoid invalid_blocks error)
-    let payload = if payload["blocks"].as_array().map(|b| b.is_empty()).unwrap_or(false) {
-        serde_json::json!({
-            "channel": channel,
-            "text": strip_markdown(text),
-        })
-    } else {
-        payload
-    };
-
     match client
         .post("https://slack.com/api/chat.postMessage")
         .header("Authorization", format!("Bearer {}", token))
@@ -768,15 +758,37 @@ fn render_blocks(text: &str) -> Vec<serde_json::Value> {
             json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }),
         ]
     } else {
-        // Generic output from model — send as plain text to avoid block issues
-        // Blocks are only used for structured messages (docs, review, etc.)
-        vec![]
+        // Generic output from model — chunk into sections (Slack limit: 3000 chars per section)
+        let mut blocks = Vec::new();
+        let mut current = String::new();
+
+        for line in text.lines() {
+            if current.len() + line.len() + 1 > 2900 {
+                if !current.is_empty() {
+                    blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": current.clone() } }));
+                    current.clear();
+                }
+            }
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+        if !current.is_empty() {
+            blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": current } }));
+        }
+
+        if blocks.is_empty() {
+            blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } }));
+        }
+
+        blocks
     }
 }
 
 /// Strip markdown for Slack's fallback text field (max 300 chars).
 fn strip_markdown(text: &str) -> String {
-    text.replace('*', "")
+    let stripped: String = text.replace('*', "")
         .replace('`', "")
         .replace('_', "")
         .replace('"', "'")
@@ -787,5 +799,11 @@ fn strip_markdown(text: &str) -> String {
         .join(" ")
         .chars()
         .take(300)
-        .collect()
+        .collect();
+
+    if stripped.is_empty() {
+        "Processing...".to_string()
+    } else {
+        stripped
+    }
 }
