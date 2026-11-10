@@ -463,6 +463,30 @@ async fn handle_command_impl(
     }
 
     // Everything else goes through the groose agent
+    if !intent.needs_repo {
+        // No repo needed — direct model call for fast answer
+        let system = match intent.action {
+            ActionType::FindDocumentation => {
+                "You are a Subject Matter Expert on software documentation. \
+                 Answer thoroughly with examples, best practices, and references."
+            }
+            _ => {
+                "You are a helpful software engineering assistant. Answer concisely and accurately."
+            }
+        };
+        match crate::deepseek::call_deepseek(&deepseek_key, system, &intent.query).await {
+            Ok(answer) => {
+                post_slack_message(bot_token, channel_id, &answer).await;
+            }
+            Err(e) => {
+                tracing::warn!("DeepSeek error: {:?}", e);
+                post_slack_message(bot_token, channel_id, "⚠️ Sorry, I couldn't process that request.").await;
+            }
+        }
+        return;
+    }
+
+    // Needs a repo — use the full groose coding engine
     let prompt = match intent.action {
         ActionType::FindDocumentation => {
             format!(
