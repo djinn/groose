@@ -51,12 +51,77 @@ pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &st
         content
     };
 
+    let text = strip_reasoning_preamble(&text);
+
     if text.is_empty() {
         tracing::warn!("DeepSeek returned empty content");
         anyhow::bail!("DeepSeek returned empty response");
     }
 
     Ok(text)
+}
+
+/// Remove chain-of-thought preambles that leak into responses.
+///
+/// Some models emit "We need answer. Need parse question..." style text
+/// before the real answer. Strip everything before the first clear
+/// answer marker (Markdown header, or a sentence that looks like a
+/// substantive reply).
+fn strip_reasoning_preamble(text: &str) -> String {
+    let trimmed = text.trim_start();
+
+    // If it starts with a Markdown header, it's already clean
+    if trimmed.starts_with('#') {
+        return trimmed.to_string();
+    }
+
+    // Common reasoning markers that indicate the answer hasn't started yet
+    let reasoning_markers = [
+        "We need answer",
+        "Need parse question",
+        "Let's think",
+        "Let me think",
+        "I need to",
+        "The user is asking",
+        "User asks:",
+        "Need answer balanced",
+        "Need explain",
+        "Need mention",
+        "Need discuss",
+        "Need give",
+        "Need provide",
+    ];
+
+    let starts_reasoning = reasoning_markers
+        .iter()
+        .any(|m| trimmed.starts_with(m) || trimmed.to_lowercase().starts_with(&m.to_lowercase()));
+
+    if !starts_reasoning {
+        return trimmed.to_string();
+    }
+
+    // Try to find where the real answer starts: first Markdown header
+    for (i, line) in trimmed.lines().enumerate() {
+        let l = line.trim();
+        if l.starts_with('#') {
+            return trimmed.lines().skip(i).collect::<Vec<_>>().join("\n");
+        }
+    }
+
+    // No header — find the first line that doesn't look like reasoning
+    let skip_words = ["need ", "let's ", "user ", "we need", "answer balanced", "explain "];
+    let mut start = 0;
+    for (i, line) in trimmed.lines().enumerate() {
+        let lower = line.to_lowercase();
+        let is_reasoning = skip_words.iter().any(|w| lower.starts_with(w))
+            || line.trim().is_empty();
+        if !is_reasoning && line.len() > 40 {
+            start = i;
+            break;
+        }
+    }
+
+    trimmed.lines().skip(start).collect::<Vec<_>>().join("\n")
 }
 
 /// DeepSeek model provider implementing the CodingEngine's ModelProvider trait.

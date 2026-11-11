@@ -475,10 +475,14 @@ async fn handle_command_impl(
         // No repo needed — direct model call for fast answer
         let system = match intent.action {
             ActionType::FindDocumentation => {
-                "You are a helpful documentation expert. Explain the topic clearly with examples."
+                "You are a senior technical documentation expert. Respond with the final answer \
+                 directly — clean, well-organized documentation the user can read as-is. \
+                 Do NOT include your thinking process, plans, or meta-commentary. \
+                 Start directly with the answer. Use Markdown structure."
             }
             _ => {
-                "You are a helpful assistant. Answer concisely."
+                "You are a helpful assistant. Respond with the final answer only — \
+                 no thinking process, no planning text. Start directly with the answer."
             }
         };
         post_slack_message(bot_token, channel_id, &format!("⏳ Searching for: {}", intent.query)).await;
