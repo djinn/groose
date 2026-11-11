@@ -145,7 +145,7 @@ fn convert_table(rows: &[String]) -> String {
     // Parse header row
     let headers: Vec<String> = rows[0]
         .split('|')
-        .map(|c| c.trim().to_string())
+        .map(|c| convert_bold(c.trim()))
         .filter(|c| !c.is_empty())
         .collect();
 
@@ -159,21 +159,27 @@ fn convert_table(rows: &[String]) -> String {
     for row in data_rows {
         let cells: Vec<String> = row
             .split('|')
-            .map(|c| c.trim().to_string())
+            .map(|c| convert_bold(c.trim()))
             .filter(|c| !c.is_empty())
             .collect();
 
         if cells.len() >= 2 {
-            // Format as: *Header1*: value — *Header2*: value
-            let mut parts = Vec::new();
-            for (i, cell) in cells.iter().enumerate() {
-                if i < headers.len() {
-                    parts.push(format!("*{}*: {}", headers[i], cell));
-                } else {
-                    parts.push(cell.clone());
+            // First cell as the item, others as attributes.
+            // Use middle-dot separator so it doesn't look like a broken table.
+            let first = cells[0].trim_end_matches('.');
+            if cells.len() == 2 {
+                out.push_str(&format!("• *{}* → {}\n", first, cells[1]));
+            } else {
+                let mut parts = Vec::new();
+                for (i, cell) in cells.iter().enumerate().skip(1) {
+                    if i < headers.len() {
+                        parts.push(format!("*{}*: {}", headers[i], cell));
+                    } else {
+                        parts.push(cell.clone());
+                    }
                 }
+                out.push_str(&format!("• *{}* — {}\n", first, parts.join(" · ")));
             }
-            out.push_str(&format!("• {}\n", parts.join("  |  ")));
         }
     }
 
@@ -211,8 +217,18 @@ mod tests {
     fn test_table() {
         let md = "| Name | Value |\n|---|---|\n| Payload | data |\n| Attributes | meta |\n";
         let out = to_slack_mrkdwn(md);
-        assert!(out.contains("*Name*: Payload"));
-        assert!(out.contains("*Value*: data"));
+        assert!(out.contains("• *Payload* → data"));
+        assert!(out.contains("• *Attributes* → meta"));
+        // Should not contain raw pipes from the table
+        assert!(!out.contains("|---|"));
+    }
+
+    #[test]
+    fn test_table_bold_in_cells() {
+        let md = "| Case | Tool |\n|---|---|\n| APIs | **API Manager** |\n";
+        let out = to_slack_mrkdwn(md);
+        assert!(out.contains("*API Manager*"));
+        assert!(!out.contains("**"));
     }
 
     #[test]
