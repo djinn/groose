@@ -7,60 +7,77 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Simple direct DeepSeek call for general chat responses.
+///
+/// Handles DeepSeek's reasoning model quirk: the model sometimes returns
+/// empty `content` with everything in `reasoning_content`. Instead of
+/// failing, we retry with a follow-up turn asking for the final answer.
 pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &str) -> Result<String> {
     tracing::info!("call_deepseek: starting with key={}.., prompt_len={}", &api_key[..8], user_message.len());
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
         .build()?;
     tracing::info!("call_deepseek: client built");
 
-    let request = serde_json::json!({
-        "model": "deepseek-flash",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 2048,
-    });
+    let mut messages = vec![
+        serde_json::json!({"role": "system", "content": system_prompt}),
+        serde_json::json!({"role": "user", "content": user_message}),
+    ];
 
-    let resp = client
-        .post("https://api.deepseek.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await?;
+    for attempt in 0..3 {
+        let request = serde_json::json!({
+            "model": "deepseek-flash",
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        });
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("DeepSeek API error {}: {}", status, body);
-    }
+        let resp = client
+            .post("https://api.deepseek.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
 
-    let chat_resp: serde_json::Value = resp.json().await?;
-    tracing::info!("call_deepseek: full response keys={:?}", chat_resp.as_object().map(|o| o.keys().collect::<Vec<_>>()));
-    let message = &chat_resp["choices"][0]["message"];
-    let content = message["content"].as_str().unwrap_or("").to_string();
-    let reasoning = message["reasoning_content"].as_str().unwrap_or("").to_string();
-
-    let text = content;
-
-    if text.is_empty() {
-        if !reasoning.is_empty() {
-            tracing::warn!("call_deepseek: content empty but reasoning_content populated — model didn't produce a final answer");
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("DeepSeek API error {}: {}", status, body);
         }
-        anyhow::bail!("DeepSeek returned empty response");
+
+        let chat_resp: serde_json::Value = resp.json().await?;
+        let message = &chat_resp["choices"][0]["message"];
+        let content = message["content"].as_str().unwrap_or("").to_string();
+        let reasoning = message["reasoning_content"].as_str().unwrap_or("").to_string();
+
+        let text = strip_reasoning_preamble(&content);
+        if !text.is_empty() {
+            return Ok(text);
+        }
+
+        // Empty content — model reasoned but didn't answer.
+        // Retry: append its reasoning and ask for the final answer.
+        if reasoning.is_empty() {
+            anyhow::bail!("DeepSeek returned empty response");
+        }
+
+        tracing::info!(
+            attempt = attempt,
+            reasoning_len = reasoning.len(),
+            "call_deepseek: empty content, requesting final answer"
+        );
+
+        messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": reasoning,
+        }));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": "Now provide your final answer as clean Markdown documentation. Do not include any thinking process — only the answer.",
+        }));
     }
 
-    let text = strip_reasoning_preamble(&text);
-
-    if text.is_empty() {
-        tracing::warn!("DeepSeek returned empty content");
-        anyhow::bail!("DeepSeek returned empty response");
-    }
-
-    Ok(text)
+    anyhow::bail!("DeepSeek did not produce a final answer after retries")
 }
 
 /// Remove chain-of-thought preambles that leak into responses.
