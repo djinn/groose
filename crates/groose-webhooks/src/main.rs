@@ -856,17 +856,42 @@ fn render_blocks(text: &str) -> Vec<serde_json::Value> {
         let mut blocks = Vec::new();
         let mut current = String::new();
 
-        for line in text.lines() {
-            if current.len() + line.len() + 1 > 2900 {
-                if !current.is_empty() {
-                    blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": current.clone() } }));
-                    current.clear();
+        // Helper: split a long line into <=limit chunks at word boundaries
+        fn split_line(line: &str, limit: usize) -> Vec<String> {
+            if line.len() <= limit {
+                return vec![line.to_string()];
+            }
+            let mut parts = Vec::new();
+            let mut rest = line;
+            while !rest.is_empty() {
+                if rest.len() <= limit {
+                    parts.push(rest.to_string());
+                    break;
                 }
+                // Find last space within limit
+                let end = match rest[..limit].rfind(' ') {
+                    Some(pos) if pos > limit / 2 => pos,
+                    _ => limit,
+                };
+                parts.push(rest[..end].to_string());
+                rest = rest[end..].trim_start();
             }
-            if !current.is_empty() {
-                current.push('\n');
+            parts
+        }
+
+        for line in text.lines() {
+            for part in split_line(line, 2900) {
+                if current.len() + part.len() + 1 > 2900 {
+                    if !current.is_empty() {
+                        blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": current.clone() } }));
+                        current.clear();
+                    }
+                }
+                if !current.is_empty() {
+                    current.push('\n');
+                }
+                current.push_str(&part);
             }
-            current.push_str(line);
         }
         if !current.is_empty() {
             blocks.push(json!({ "type": "section", "text": { "type": "mrkdwn", "text": current } }));

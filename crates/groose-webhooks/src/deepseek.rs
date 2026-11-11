@@ -44,12 +44,14 @@ pub async fn call_deepseek(api_key: &str, system_prompt: &str, user_message: &st
     let content = message["content"].as_str().unwrap_or("").to_string();
     let reasoning = message["reasoning_content"].as_str().unwrap_or("").to_string();
 
-    let text = if content.is_empty() && !reasoning.is_empty() {
-        tracing::info!("call_deepseek: using reasoning_content instead of content");
-        reasoning
-    } else {
-        content
-    };
+    let text = content;
+
+    if text.is_empty() {
+        if !reasoning.is_empty() {
+            tracing::warn!("call_deepseek: content empty but reasoning_content populated — model didn't produce a final answer");
+        }
+        anyhow::bail!("DeepSeek returned empty response");
+    }
 
     let text = strip_reasoning_preamble(&text);
 
