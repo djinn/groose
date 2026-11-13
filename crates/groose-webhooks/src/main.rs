@@ -207,6 +207,19 @@ async fn receive_slack(
 
     match verifier.verify(body.as_bytes(), signature, timestamp).await {
         Ok(Some(event)) => {
+            // Channel denylist — ignore events from excluded channels
+            let denied: Vec<String> = env_or("GROOSE_DENIED_CHANNELS", "")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if let Some(ref ch) = event.channel_id {
+                if denied.contains(ch) {
+                    tracing::info!(channel = %ch, "event ignored — channel is denylisted");
+                    return Ok(Json(serde_json::json!({ "ok": true, "ignored": "denylist" })));
+                }
+            }
+
             tracing::info!(
                 event_id = %event.event_id,
                 event_type = %event.event_type,
@@ -286,6 +299,20 @@ async fn receive_slash_command(
     };
 
     let cmd = slash_payload.to_slack_command();
+
+    // Channel denylist — ignore commands from excluded channels
+    let denied: Vec<String> = env_or("GROOSE_DENIED_CHANNELS", "")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if denied.contains(&channel_id) {
+        tracing::info!(channel = %channel_id, "slash command ignored — channel is denylisted");
+        return Ok(Json(serde_json::json!({
+            "response_type": "ephemeral",
+            "text": "Mule Buddy isn't available in this channel.",
+        })));
+    }
 
     // Execute the command in background (Slack needs response within 3 seconds)
     let state_clone = state.clone();
